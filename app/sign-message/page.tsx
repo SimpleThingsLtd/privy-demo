@@ -9,7 +9,13 @@ export default function SignMessagePage() {
   const { user, authenticated } = usePrivy()
   const { signMessage: privySignMessage } = useCrossAppAccounts()
   const { address: wagmiAddress, isConnected: wagmiIsConnected } = useAccount()
-  const { signMessage: wagmiSignMessage, isPending: isWagmiSigning } = useSignMessage()
+  const { signMessage: wagmiSignMessage, isPending: isWagmiSigning } = useSignMessage({
+    mutation: {
+      onSuccess(data) {
+        setWagmiSignature(data);
+      }
+    }
+  })
   
   const [message, setMessage] = useState('Hello, Meme World!')
   const [crossAppAccount, setCrossAppAccount] = useState<CrossAppAccount | null>(null)
@@ -76,8 +82,7 @@ export default function SignMessagePage() {
     setWagmiSignature(null)
     
     try {
-      const result = await wagmiSignMessage({ message })
-      setWagmiSignature(result)
+      wagmiSignMessage({ message })
     } catch (error: any) {
       console.error('Wagmi signing error:', error)
       setSignError(`Wagmi signing error: ${error.message || 'Unknown error'}`)
