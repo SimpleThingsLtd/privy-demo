@@ -209,7 +209,7 @@ export default function ListMemesPage() {
                   className="w-full px-4 py-2 bg-blue-600 text-white rounded-md hover:bg-blue-700 transition-colors"
                   onClick={() => handleBuy(coin)}
                 >
-                  Buy
+                  Buy 0.0001 ETH ($0.25) 
                 </button>
               </div>
             </div>
