@@ -170,6 +170,94 @@ export default function SignMessagePage() {
           )}
         </>
       )}
+
+      {/* Simplified Example Section */}
+      <div className="mt-12 pt-8 border-t">
+        <h2 className="text-2xl font-bold mb-4">Simplified Example</h2>
+        <div className="p-4 bg-gray-50 rounded-lg border">
+          <p className="text-sm text-gray-600 mb-4">Here's a simplified version of the message signing functionality:</p>
+          <pre className="bg-white p-4 rounded border overflow-auto text-sm">
+{`import {usePrivy, useCrossAppAccounts} from '@privy-io/react-auth';
+
+function Button() {
+  const {user} = usePrivy();
+  const {signMessage} = useCrossAppAccounts();
+  const crossAppAccount = user.linkedAccounts.find((account) => account.type === 'cross_app');
+  const address = crossAppAccount.embeddedWallets[0].address;
+
+  return (
+    <button onClick={() => signMessage('Hello world', {address: address})} disabled={!address}>
+      Sign a message with your cross-app wallet
+    </button>
+  );
+}`}
+          </pre>
+          
+          {/* Live Implementation of Simplified Example */}
+          <div className="mt-6">
+            <h3 className="text-lg font-medium mb-3">Try the Simplified Version:</h3>
+            <SimpleSignButton />
+          </div>
+        </div>
+      </div>
+    </div>
+  )
+}
+
+// Simplified Example Implementation
+function SimpleSignButton() {
+  const { user } = usePrivy()
+  const { signMessage } = useCrossAppAccounts()
+  const [signature, setSignature] = useState<string | null>(null)
+  const [isSigning, setIsSigning] = useState(false)
+  const [error, setError] = useState<string | null>(null)
+
+  const crossAppAccount = user?.linkedAccounts.find(
+    (account) => account.type === 'cross_app'
+  )
+  const address = crossAppAccount?.embeddedWallets?.[0]?.address
+
+  const handleSign = async () => {
+    if (!address) return
+    
+    setIsSigning(true)
+    setError(null)
+    setSignature(null)
+    
+    try {
+      const result = await signMessage('Hello world', { address })
+      setSignature(result)
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Failed to sign message')
+    } finally {
+      setIsSigning(false)
+    }
+  }
+
+  return (
+    <div className="space-y-4">
+      <button
+        onClick={handleSign}
+        disabled={!address || isSigning}
+        className="w-full px-4 py-2 bg-green-600 text-white rounded-md hover:bg-green-700 disabled:bg-gray-400 disabled:cursor-not-allowed"
+      >
+        {isSigning ? 'Signing...' : 'Sign with Simplified Example'}
+      </button>
+
+      {signature && (
+        <div className="p-3 bg-gray-50 rounded border">
+          <p className="font-medium mb-1">Signature:</p>
+          <p className="text-xs font-mono bg-white p-2 rounded overflow-auto">
+            {signature}
+          </p>
+        </div>
+      )}
+
+      {error && (
+        <div className="p-3 bg-red-50 border border-red-100 text-red-700 rounded-md">
+          <p>{error}</p>
+        </div>
+      )}
     </div>
   )
 }

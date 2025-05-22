@@ -18,9 +18,9 @@ export const Navigation = () => {
   // Define navigation links
   const links = [
     { href: '/', label: 'Home' },
-    { href: '/sign-message', label: 'Sign Message' },
-    { href: '/list-memes', label: 'List Memes' },
-    { href: '/trade-meme', label: 'Trade Meme' }
+    { href: '/sign-message', label: 'Sign' },
+    { href: '/list-memes', label: 'MyMemes' },
+    { href: '/trade-meme', label: 'Trade' }
   ]
 
   return (
