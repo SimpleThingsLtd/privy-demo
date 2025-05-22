@@ -64,7 +64,7 @@ export function Providers({ children }: ProvidersProps) {
         },
         // Add Flaunch as a login option in Privy
         loginMethodsAndOrder: {
-          primary: ['email', 'google', `privy:${process.env.NEXT_PUBLIC_PRIVY_PROVIDER_ID}`]
+          primary: [`privy:${process.env.NEXT_PUBLIC_PRIVY_PROVIDER_ID}`]
         },
         // Base network configuration
         defaultChain: base,
