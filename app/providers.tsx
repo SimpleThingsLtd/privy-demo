@@ -11,6 +11,7 @@ import {
   lightTheme
 } from '@rainbow-me/rainbowkit'
 import { toPrivyWallet } from '@privy-io/cross-app-connect/rainbow-kit'
+import { GraphQLProvider } from '@/components/GraphQLProvider'
 import '@rainbow-me/rainbowkit/styles.css'
 import type { Chain } from 'wagmi/chains'
 
@@ -59,6 +60,9 @@ export function Providers({ children }: ProvidersProps) {
     <PrivyProvider
       appId={process.env.NEXT_PUBLIC_PRIVY_APP_ID!}
       config={{
+        embeddedWallets: {
+          showWalletUIs: false
+        },
         appearance: {
           theme: 'light'
         },
@@ -76,7 +80,9 @@ export function Providers({ children }: ProvidersProps) {
           <RainbowKitProvider 
             theme={lightTheme()}
           >
-            {children}
+            <GraphQLProvider>
+              {children}
+            </GraphQLProvider>
           </RainbowKitProvider>
         </QueryClientProvider>
       </WagmiProvider>
