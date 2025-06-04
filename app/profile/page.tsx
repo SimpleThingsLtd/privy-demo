@@ -1,9 +1,10 @@
 'use client'
 
-import { UserPill } from '@privy-io/react-auth/ui'
 import { usePrivy, useWallets, useCrossAppAccounts } from '@privy-io/react-auth'
+import { useSmartWallets } from '@privy-io/react-auth/smart-wallets'
 import { useAccount } from 'wagmi'
 import { useEffect, useState } from 'react'
+import { base } from 'viem/chains'
 
 type CrossAppWallet = {
     address: string
@@ -14,10 +15,26 @@ type CrossAppWallet = {
 export default function ProfilePage() {
     const { user, authenticated } = usePrivy()
     const { wallets } = useWallets()
-    const { sendTransaction } = useCrossAppAccounts()
+    const smartWalletsHook = useSmartWallets()
     const { address: activeAddress } = useAccount()
     const [crossAppWallets, setCrossAppWallets] = useState<CrossAppWallet[]>([])
     const [selectedSmartWallet, setSelectedSmartWallet] = useState<string | null>(null)
+    const { sendTransaction } = useCrossAppAccounts()
+
+    // Comprehensive debug logging
+    useEffect(() => {
+        console.log('=== Comprehensive Smart Wallet Debug ===')
+        console.log('authenticated:', authenticated)
+        console.log('user:', user)
+        console.log('user.smartWallet:', user?.smartWallet)
+        console.log('user.linkedAccounts:', user?.linkedAccounts)
+        console.log('smartWalletsHook:', smartWalletsHook)
+        console.log('smartWalletsHook.client:', smartWalletsHook?.client)
+        console.log('selectedSmartWallet:', selectedSmartWallet)
+        console.log('crossAppWallets:', crossAppWallets)
+        console.log('regular wallets:', wallets)
+        console.log('=========================================')
+    }, [authenticated, user, smartWalletsHook, selectedSmartWallet, crossAppWallets, wallets])
 
     // Process cross-app accounts and their wallets
     useEffect(() => {
@@ -82,26 +99,115 @@ export default function ProfilePage() {
         return crossAppAccount?.smartWallets || []
     }
 
-    // Test transaction function to demonstrate proper usage
+    // Test transaction function using smart wallets
     const testTransaction = async () => {
+        console.log('=== Test Transaction Debug ===')
+        console.log('selectedSmartWallet:', selectedSmartWallet)
+        console.log('authenticated:', authenticated)
+        console.log('smartWalletsHook:', smartWalletsHook)
+        console.log('smartWalletsHook.client:', smartWalletsHook?.client)
+        console.log('user smart wallets:', getSmartWallets())
+        console.log('============================')
+
         if (!selectedSmartWallet) {
             alert('Please select a smart wallet first')
             return
         }
 
-        try {
-            console.log('Sending test transaction from smart wallet:', selectedSmartWallet)
+        if (!authenticated) {
+            alert('Please authenticate with Privy first')
+            return
+        }
+
+        // Try to understand why smartWalletClient is not available
+        if (!smartWalletsHook?.client) {
+            const debugInfo = {
+                authenticated,
+                userExists: !!user,
+                userSmartWallet: user?.smartWallet,
+                hasLinkedAccounts: !!user?.linkedAccounts?.length,
+                crossAppSmartWallets: user?.linkedAccounts?.find(acc => acc.type === 'cross_app')?.smartWallets?.length || 0,
+                selectedWallet: selectedSmartWallet,
+                smartWalletsHook: smartWalletsHook
+            }
             
-            // Send a simple test transaction (0 ETH transfer to self)
-            const txHash = await sendTransaction({
-                to: selectedSmartWallet, // Send to self as a test
-                value: '0x0', // 0 ETH
-                data: '0x', // No data
-                chainId: 8453 // Base network chainId
-            }, { address: selectedSmartWallet }) // Use smart wallet address
+            console.error('Smart wallet client not available. Debug info:', debugInfo)
+            
+            alert(`Smart wallet client not available. This might be because:
+
+1. Smart wallets are disabled in Privy Dashboard
+2. The smart wallet needs to be deployed first  
+3. Cross-app smart wallets need different configuration
+4. Missing paymaster configuration
+
+Debug info:
+- Authenticated: ${authenticated}
+- User exists: ${!!user}
+- Cross-app smart wallets: ${debugInfo.crossAppSmartWallets}
+- Smart wallets hook: ${JSON.stringify(smartWalletsHook, null, 2)}
+
+Try enabling regular smart wallets in your Privy Dashboard, or configure a paymaster.`)
+            return
+        }
+
+        try {
+            console.log('Sending test transaction via useSmartWallets:', selectedSmartWallet)
+            
+            // Use the correct smart wallet API
+            const txHash = await smartWalletsHook.client.sendTransaction(
+                {
+                    chain: base,                              // Use chain object
+                    to: selectedSmartWallet as `0x${string}`, // Send to self as a test
+                    value: BigInt(0),                         // 0 ETH as bigint
+                    data: '0x',                              // No data
+                }
+            )
             
             console.log('Transaction sent! Hash:', txHash)
             alert(`Test transaction sent! Hash: ${txHash}`)
+        } catch (error) {
+            console.error('Transaction failed:', error)
+            alert(`Transaction failed: ${error instanceof Error ? error.message : 'Unknown error'}`)
+        }
+    }
+
+    // Alternative: Test transaction using embedded wallet (cross-app signer)
+    const testTransactionWithEmbeddedWallet = async () => {
+        const embeddedWalletAddress = getEmbeddedWalletAddress()
+        
+        console.log('=== Embedded Wallet Transaction Debug ===')
+        console.log('embeddedWalletAddress:', embeddedWalletAddress)
+        console.log('authenticated:', authenticated)
+        console.log('==========================================')
+
+        if (!embeddedWalletAddress) {
+            alert('No embedded wallet found')
+            return
+        }
+
+        if (!authenticated) {
+            alert('Please authenticate with Privy first')
+            return
+        }
+
+        try {
+            console.log('Sending test transaction from embedded wallet:', embeddedWalletAddress)
+            
+            // Use embedded wallet for transaction (this should work without blank popup)
+            const txHash = await sendTransaction(
+                {
+                    to: embeddedWalletAddress as `0x${string}`,  // Send to self as a test
+                    value: '0x0',                               // 0 ETH
+                    data: '0x',                                 // No data
+                    chainId: base.id,                           // Use chainId for cross-app
+                },
+                { 
+                    address: embeddedWalletAddress as `0x${string}` // Use embedded wallet address
+                }
+            )
+            
+            console.log('Transaction sent! Hash:', txHash)
+            alert(`Embedded wallet transaction sent! Hash: ${txHash}`)
         } catch (error) {
             console.error('Transaction failed:', error)
             alert(`Transaction failed: ${error instanceof Error ? error.message : 'Unknown error'}`)
@@ -113,10 +219,10 @@ export default function ProfilePage() {
             <h1 className="text-2xl font-bold mb-4">Profile</h1>
             <div className="flex flex-col gap-4">
                 <div className="flex items-center gap-4">
-                    <UserPill 
+                    {/* <UserPill 
                         action={{ type: 'connectWallet' }}
                         size={40}
-                    />
+                    /> */}
                     {activeAddress && (
                         <div className="text-sm text-gray-600">
                             Wagmi Active Address:
@@ -176,9 +282,15 @@ export default function ProfilePage() {
                         </p>
                         <button 
                             onClick={testTransaction}
-                            className="px-4 py-2 bg-green-600 text-white rounded-md hover:bg-green-700"
+                            className="px-4 py-2 bg-green-600 text-white rounded-md hover:bg-green-700 mr-2"
                         >
-                            Test Transaction Setup
+                            Test Smart Wallet
+                        </button>
+                        <button 
+                            onClick={testTransactionWithEmbeddedWallet}
+                            className="px-4 py-2 bg-blue-600 text-white rounded-md hover:bg-blue-700"
+                        >
+                            Test Embedded Wallet
                         </button>
                     </div>
                 )}
@@ -206,7 +318,9 @@ export default function ProfilePage() {
                     <ul className="text-sm text-blue-800 space-y-1">
                         <li>• <strong>Smart Wallets:</strong> Hold your funds and execute transactions</li>
                         <li>• <strong>Embedded Wallets:</strong> Used internally by Privy for signing/authorization</li>
-                        <li>• <strong>For Transactions:</strong> Use <code>sendTransaction(txData, {`{ address: smartWalletAddress }`})</code></li>
+                        <li>• <strong>For Transactions:</strong> Use <code>useSmartWallets().client.sendTransaction()</code></li>
+                        <li>• <strong>Correct API:</strong> Pass <code>chain</code> object, not <code>chainId</code></li>
+                        <li>• <strong>Value Format:</strong> Use <code>BigInt(0)</code> for 0 ETH</li>
                         <li>• <strong>Privy handles:</strong> The embedded wallet signing automatically</li>
                     </ul>
                 </div>
