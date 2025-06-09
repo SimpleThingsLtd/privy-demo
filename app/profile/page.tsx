@@ -117,6 +117,7 @@ export default function ProfilePage() {
         console.log('smartWalletsHook.client:', smartWalletsHook?.client)
         console.log('smartWalletsHook.getClientForChain:', smartWalletsHook?.getClientForChain)
         console.log('user smart wallets:', getSmartWallets())
+        console.log('base chain id:', base.id)
         console.log('============================')
 
         if (!selectedSmartWallet) {
@@ -161,24 +162,53 @@ Try enabling regular smart wallets in your Privy Dashboard, or configure a payma
 
         try {
             console.log('Getting smart wallet client for Base chain:', base.id)
+            console.log('Base chain details:', base)
             
             // Get the client for the specific chain (Base) using correct docs signature
             console.log('Calling getClientForChain with base.id:', base.id)
             const smartWalletClient = await smartWalletsHook.getClientForChain({ id: base.id })
             
             if (!smartWalletClient) {
-                alert(`Could not get smart wallet client for Base chain (${base.id}). This might be because:
+                // Enhanced debugging for client creation failure
+                console.error('Smart wallet client creation failed for Base chain')
+                console.error('Chain ID:', base.id)
+                console.error('Chain name:', base.name)
+                console.error('User object:', JSON.stringify(user, null, 2))
+                console.error('Smart wallets hook state:', JSON.stringify(smartWalletsHook, null, 2))
                 
-1. Smart wallets are not enabled for Base in your Privy Dashboard
-2. Missing paymaster configuration for Base
-3. The smart wallet hasn't been deployed on Base yet
+                alert(`Could not get smart wallet client for Base chain (${base.id}).
 
-Please check your Privy Dashboard smart wallet settings.`)
+This error suggests one of these issues:
+
+🔧 CONFIGURATION ISSUES:
+1. Smart wallets not enabled for Base in Privy Dashboard
+2. Missing bundler configuration for Base network
+3. Missing paymaster configuration for Base network
+4. Chain not supported in your smart wallet setup
+
+🚀 DEPLOYMENT ISSUES:
+5. Smart wallet not deployed on Base yet
+6. Insufficient funds for deployment
+7. Smart wallet factory not configured for Base
+
+💡 DEBUG INFO:
+- Chain ID: ${base.id} (Base)
+- User authenticated: ${authenticated}
+- Cross-app smart wallets: ${getSmartWallets().length}
+- Selected wallet: ${selectedSmartWallet}
+
+🛠️ NEXT STEPS:
+1. Check Privy Dashboard → Smart Wallets → Network Configuration
+2. Ensure Base is enabled with proper bundler/paymaster
+3. Try deploying the smart wallet first
+4. Contact Privy support with this error
+
+Would you like to try the cross-app smart wallet method instead?`)
                 return
             }
             
-            console.log('Smart wallet client obtained:', smartWalletClient)
-            console.log('Sending test transaction via smart wallet client:', selectedSmartWallet)
+            console.log('Smart wallet client obtained successfully:', smartWalletClient)
+            console.log('Sending test transaction via smart wallet client to:', selectedSmartWallet)
             
             // Use the chain-specific smart wallet client
             const txHash = await smartWalletClient.sendTransaction({
@@ -188,11 +218,69 @@ Please check your Privy Dashboard smart wallet settings.`)
                 data: '0x',                              // No data
             })
             
-            console.log('Transaction sent! Hash:', txHash)
-            alert(`Test transaction sent! Hash: ${txHash}`)
+            console.log('Transaction sent successfully! Hash:', txHash)
+            alert(`✅ Test transaction sent successfully!
+            
+Hash: ${txHash}
+
+🎉 This means your smart wallet is working correctly!`)
         } catch (error) {
             console.error('Transaction failed:', error)
-            alert(`Transaction failed: ${error instanceof Error ? error.message : 'Unknown error'}`)
+            
+            const errorMessage = error instanceof Error ? error.message : 'Unknown error'
+            console.error('Full error object:', error)
+            
+            if (errorMessage.includes('Failed to create smart wallet client')) {
+                alert(`❌ Smart Wallet Client Creation Failed
+
+Error: ${errorMessage}
+
+This usually means:
+
+🔧 PRIVY DASHBOARD CONFIGURATION:
+• Smart wallets not enabled for Base network
+• Missing bundler URL for Base (required)
+• Missing paymaster configuration for Base
+• Wrong network settings in dashboard
+
+💰 FUNDING/DEPLOYMENT ISSUES:
+• Smart wallet not deployed on Base yet
+• Insufficient ETH for deployment transaction
+• Paymaster not configured to sponsor deployment
+
+🌐 NETWORK ISSUES:
+• Base RPC endpoint issues
+• Network connectivity problems
+• Bundler service unavailable
+
+🛠️ HOW TO FIX:
+1. Go to Privy Dashboard → Smart Wallets
+2. Enable Base network with proper configuration
+3. Add bundler URL (contact Privy for recommended bundler)
+4. Configure paymaster for gas sponsorship
+5. Ensure sufficient funding for deployment
+
+💡 ALTERNATIVE: Try the "Cross-App Smart Wallet" button instead - it uses a different API that might work better for your setup.`)
+            } else if (errorMessage.includes('allowlist') || errorMessage.includes('not in allowlist')) {
+                alert(`❌ Paymaster Allowlist Error
+
+Error: ${errorMessage}
+
+The paymaster doesn't allow transactions to this address (${selectedSmartWallet}).
+
+🛠️ SOLUTIONS:
+1. Configure paymaster policy in Coinbase Developer Platform
+2. Add destination addresses to allowlist
+3. Use a different test address
+4. Configure custom paymaster in SmartWalletsProvider
+5. Try the null address for testing: 0x0000000000000000000000000000000000000000`)
+            } else {
+                alert(`❌ Transaction Failed
+
+Error: ${errorMessage}
+
+Full error details logged to console.`)
+            }
         }
     }
 
