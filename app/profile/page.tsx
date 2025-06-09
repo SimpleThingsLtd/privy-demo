@@ -28,6 +28,15 @@ export default function ProfilePage() {
         console.log('user:', user)
         console.log('user.smartWallet:', user?.smartWallet)
         console.log('user.linkedAccounts:', user?.linkedAccounts)
+        
+        // Check for regular smart wallet vs cross-app smart wallet
+        const regularSmartWallet = user?.linkedAccounts?.find(account => account.type === 'smart_wallet')
+        const crossAppAccount = user?.linkedAccounts?.find(account => account.type === 'cross_app')
+        
+        console.log('Regular smart wallet account:', regularSmartWallet)
+        console.log('Cross-app account:', crossAppAccount)
+        console.log('Cross-app smart wallets:', crossAppAccount?.smartWallets)
+        
         console.log('smartWalletsHook:', smartWalletsHook)
         console.log('smartWalletsHook.client:', smartWalletsHook?.client)
         console.log('selectedSmartWallet:', selectedSmartWallet)
@@ -106,6 +115,7 @@ export default function ProfilePage() {
         console.log('authenticated:', authenticated)
         console.log('smartWalletsHook:', smartWalletsHook)
         console.log('smartWalletsHook.client:', smartWalletsHook?.client)
+        console.log('smartWalletsHook.getClientForChain:', smartWalletsHook?.getClientForChain)
         console.log('user smart wallets:', getSmartWallets())
         console.log('============================')
 
@@ -119,8 +129,7 @@ export default function ProfilePage() {
             return
         }
 
-        // Try to understand why smartWalletClient is not available
-        if (!smartWalletsHook?.client) {
+        if (!smartWalletsHook?.getClientForChain) {
             const debugInfo = {
                 authenticated,
                 userExists: !!user,
@@ -151,23 +160,87 @@ Try enabling regular smart wallets in your Privy Dashboard, or configure a payma
         }
 
         try {
-            console.log('Sending test transaction via useSmartWallets:', selectedSmartWallet)
+            console.log('Getting smart wallet client for Base chain:', base.id)
             
-            // Use the correct smart wallet API
-            const txHash = await smartWalletsHook.client.sendTransaction(
-                {
-                    chain: base,                              // Use chain object
-                    to: selectedSmartWallet as `0x${string}`, // Send to self as a test
-                    value: BigInt(0),                         // 0 ETH as bigint
-                    data: '0x',                              // No data
-                }
-            )
+            // Get the client for the specific chain (Base) using correct docs signature
+            console.log('Calling getClientForChain with base.id:', base.id)
+            const smartWalletClient = await smartWalletsHook.getClientForChain({ id: base.id })
+            
+            if (!smartWalletClient) {
+                alert(`Could not get smart wallet client for Base chain (${base.id}). This might be because:
+                
+1. Smart wallets are not enabled for Base in your Privy Dashboard
+2. Missing paymaster configuration for Base
+3. The smart wallet hasn't been deployed on Base yet
+
+Please check your Privy Dashboard smart wallet settings.`)
+                return
+            }
+            
+            console.log('Smart wallet client obtained:', smartWalletClient)
+            console.log('Sending test transaction via smart wallet client:', selectedSmartWallet)
+            
+            // Use the chain-specific smart wallet client
+            const txHash = await smartWalletClient.sendTransaction({
+                chain: base,                              // Use chain object
+                to: selectedSmartWallet as `0x${string}`, // Send to self as a test
+                value: BigInt(0),                         // 0 ETH as bigint
+                data: '0x',                              // No data
+            })
             
             console.log('Transaction sent! Hash:', txHash)
             alert(`Test transaction sent! Hash: ${txHash}`)
         } catch (error) {
             console.error('Transaction failed:', error)
             alert(`Transaction failed: ${error instanceof Error ? error.message : 'Unknown error'}`)
+        }
+    }
+
+    // Test transaction using cross-app smart wallet (different from useSmartWallets)
+    const testTransactionWithCrossAppSmartWallet = async () => {
+        if (!selectedSmartWallet) {
+            alert('Please select a smart wallet first')
+            return
+        }
+
+        if (!authenticated) {
+            alert('Please authenticate with Privy first')
+            return
+        }
+
+        const crossAppAccount = getCrossAppAccount()
+        const smartWallet = crossAppAccount?.smartWallets?.find(sw => sw.address === selectedSmartWallet)
+        
+        if (!smartWallet) {
+            alert('Cross-app smart wallet not found')
+            return
+        }
+
+        try {
+            console.log('=== Cross-App Smart Wallet Transaction Debug ===')
+            console.log('Using cross-app smart wallet:', selectedSmartWallet)
+            console.log('Cross-app account:', crossAppAccount)
+            console.log('Smart wallet object:', smartWallet)
+            console.log('================================================')
+            
+            // Use useCrossAppAccounts for cross-app smart wallets
+            const txHash = await sendTransaction(
+                {
+                    to: selectedSmartWallet as `0x${string}`,  // Send to self as a test
+                    value: '0x0',                             // 0 ETH
+                    data: '0x',                               // No data
+                    chainId: base.id,                         // Use chainId for cross-app
+                },
+                { 
+                    address: selectedSmartWallet as `0x${string}` // Use smart wallet address
+                }
+            )
+            
+            console.log('Cross-app smart wallet transaction sent! Hash:', txHash)
+            alert(`Cross-app smart wallet transaction sent! Hash: ${txHash}`)
+        } catch (error) {
+            console.error('Cross-app smart wallet transaction failed:', error)
+            alert(`Cross-app smart wallet transaction failed: ${error instanceof Error ? error.message : 'Unknown error'}`)
         }
     }
 
@@ -284,7 +357,13 @@ Try enabling regular smart wallets in your Privy Dashboard, or configure a payma
                             onClick={testTransaction}
                             className="px-4 py-2 bg-green-600 text-white rounded-md hover:bg-green-700 mr-2"
                         >
-                            Test Smart Wallet
+                            Test Smart Wallet (useSmartWallets)
+                        </button>
+                        <button 
+                            onClick={testTransactionWithCrossAppSmartWallet}
+                            className="px-4 py-2 bg-purple-600 text-white rounded-md hover:bg-purple-700 mr-2"
+                        >
+                            Test Cross-App Smart Wallet
                         </button>
                         <button 
                             onClick={testTransactionWithEmbeddedWallet}
@@ -323,6 +402,27 @@ Try enabling regular smart wallets in your Privy Dashboard, or configure a payma
                         <li>• <strong>Value Format:</strong> Use <code>BigInt(0)</code> for 0 ETH</li>
                         <li>• <strong>Privy handles:</strong> The embedded wallet signing automatically</li>
                     </ul>
+                </div>
+
+                <div className="mt-4 p-4 bg-amber-50 border border-amber-200 rounded-lg">
+                    <h3 className="font-semibold text-amber-900 mb-2">🔍 Different Smart Wallet Types</h3>
+                    <div className="text-sm text-amber-800 space-y-2">
+                        <div>
+                            <strong>1. Regular Smart Wallets (useSmartWallets):</strong>
+                            <p>Created directly through Privy. Requires dashboard configuration with bundler/paymaster.</p>
+                        </div>
+                        <div>
+                            <strong>2. Cross-App Smart Wallets:</strong>
+                            <p>From external providers like Flaunch. Uses different APIs (useCrossAppAccounts).</p>
+                        </div>
+                        <div>
+                            <strong>3. Embedded Wallets:</strong>
+                            <p>Standard Privy wallets. Always work for basic transactions.</p>
+                        </div>
+                    </div>
+                    <p className="text-sm text-amber-800 mt-2">
+                        <strong>Try all three buttons above</strong> to see which type of wallet you have!
+                    </p>
                 </div>
             </div>
         </div>
