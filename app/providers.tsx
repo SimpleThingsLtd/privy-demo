@@ -2,6 +2,7 @@
 
 import React, { ReactNode } from 'react'
 import { PrivyProvider } from '@privy-io/react-auth'
+import { SmartWalletsProvider } from '@privy-io/react-auth/smart-wallets'
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import { createConfig, http, WagmiProvider } from 'wagmi'
 import { base, baseSepolia } from 'wagmi/chains'
@@ -75,17 +76,19 @@ export function Providers({ children }: ProvidersProps) {
         supportedChains: [...supportedChains]
       }}
     >
-      <WagmiProvider config={config}>
-        <QueryClientProvider client={queryClient}>
-          <RainbowKitProvider 
-            theme={lightTheme()}
-          >
-            <GraphQLProvider>
-              {children}
-            </GraphQLProvider>
-          </RainbowKitProvider>
-        </QueryClientProvider>
-      </WagmiProvider>
+      <SmartWalletsProvider>
+        <WagmiProvider config={config}>
+          <QueryClientProvider client={queryClient}>
+            <RainbowKitProvider 
+              theme={lightTheme()}
+            >
+              <GraphQLProvider>
+                {children}
+              </GraphQLProvider>
+            </RainbowKitProvider>
+          </QueryClientProvider>
+        </WagmiProvider>
+      </SmartWalletsProvider>
     </PrivyProvider>
   )
 }
