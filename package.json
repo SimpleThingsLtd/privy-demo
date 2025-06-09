@@ -9,7 +9,7 @@
     "lint": "next lint"
   },
   "dependencies": {
-    "@coinbase/wallet-sdk": "^4.3.4",
+    "@coinbase/wallet-sdk": "4.3.2",
     "@privy-io/cross-app-connect": "^0.2.1",
     "@privy-io/react-auth": "^2.14.0",
     "@privy-io/wagmi": "^1.0.3",
