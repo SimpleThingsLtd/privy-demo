@@ -9,8 +9,9 @@
     "lint": "next lint"
   },
   "dependencies": {
+    "@coinbase/wallet-sdk": "^4.3.4",
     "@privy-io/cross-app-connect": "^0.2.1",
-    "@privy-io/react-auth": "^2.13.2",
+    "@privy-io/react-auth": "^2.14.0",
     "@privy-io/wagmi": "^1.0.3",
     "@rainbow-me/rainbowkit": "^2.2.5",
     "@solana/spl-token": "^0.4.13",
