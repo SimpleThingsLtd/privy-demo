@@ -3,9 +3,11 @@
 import React from 'react'
 import Link from 'next/link'
 import { usePathname } from 'next/navigation'
+import { useNetwork } from '@/contexts/NetworkContext'
 
 export const Navigation = () => {
   const pathname = usePathname()
+  const { selectedNetwork, setSelectedNetwork, availableNetworks } = useNetwork()
 
   // Define navigation links
   const links = [
@@ -40,6 +42,25 @@ export const Navigation = () => {
                 </Link>
               ))}
             </nav>
+          </div>
+
+          {/* Network Selection Dropdown */}
+          <div className="flex items-center gap-2">
+            <span className="text-sm text-gray-600">Network:</span>
+            <select
+              value={selectedNetwork.name}
+              onChange={(e) => {
+                const network = availableNetworks.find(n => n.name === e.target.value)
+                if (network) setSelectedNetwork(network)
+              }}
+              className="px-3 py-1 border border-gray-300 rounded-md text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
+            >
+              {availableNetworks.map((network) => (
+                <option key={network.id} value={network.name}>
+                  {network.name}
+                </option>
+              ))}
+            </select>
           </div>
         </div>
       </div>

@@ -9,6 +9,7 @@
     "lint": "next lint"
   },
   "dependencies": {
+    "@flaunch/sdk": "^0.8.1",
     "@privy-io/cross-app-connect": "^0.2.1",
     "@privy-io/react-auth": "^2.14.0",
     "@privy-io/wagmi": "^1.0.3",
