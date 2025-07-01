@@ -1,25 +1,16 @@
 'use client'
 
-import React, { useEffect, useState, useMemo, useCallback } from 'react'
+// MEME COIN PURCHASE IMPLEMENTATION
+// Uses Flaunch SDK for quotes and ethToMemecoin for Universal Router swaps
+
+import React, { useEffect, useState, useCallback } from 'react'
 import { usePrivy, useCrossAppAccounts } from '@privy-io/react-auth'
-import { useAccount, useBalance, useWalletClient } from 'wagmi'
+import { useAccount, useBalance } from 'wagmi'
 import Link from 'next/link'
 import type { CrossAppAccount } from '@privy-io/react-auth'
 import { useNetwork } from '@/contexts/NetworkContext'
-import { ReadFlaunchSDK, ReadWriteFlaunchSDK, createFlaunch } from '@flaunch/sdk'
-import { 
-  createPublicClient, 
-  createWalletClient,
-  http, 
-  encodeFunctionData, 
-  parseAbi, 
-  decodeFunctionData,
-} from 'viem'
-
-// ABI for decoding the hack calldata
-const encodedCallAbi = parseAbi([
-  "function call(address to, uint256 value, bytes cdata)",
-])
+import { ReadFlaunchSDK, UniversalRouterAddress, ethToMemecoin } from '@flaunch/sdk'
+import { type Address } from 'viem'
 
 // Type for the REST API response
 type TokenData = {
@@ -49,7 +40,6 @@ type TokensApiResponse = {
 export default function ListMemesPage() {
   const { user, authenticated } = usePrivy()
   const { address: wagmiAddress, isConnected: wagmiIsConnected } = useAccount()
-  const { data: walletClient } = useWalletClient()
   const { sendTransaction } = useCrossAppAccounts()
   const { selectedNetwork } = useNetwork()
   const [crossAppAccount, setCrossAppAccount] = useState<CrossAppAccount | null>(null)
@@ -58,60 +48,6 @@ export default function ListMemesPage() {
   const [error, setError] = useState<string | null>(null)
   const [flaunchSDK, setFlaunchSDK] = useState<ReadFlaunchSDK | null>(null)
   const [tokenPrices, setTokenPrices] = useState<{[key: string]: number}>({})
-
-  // Create the hacked write SDK for extracting calldata (following dev's exact pattern)
-  const flaunchWrite = useMemo(() => {
-    if (!crossAppAccount?.smartWallets?.[0]?.address) return null
-    
-    // Create a mock wallet client for the SDK hack since wagmi's useWalletClient doesn't work with cross-app accounts
-    const smartWalletAddress = crossAppAccount.smartWallets[0].address
-    
-    const mockWalletClient = createWalletClient({
-      account: smartWalletAddress as `0x${string}`,
-      chain: selectedNetwork,
-      transport: http(),
-    }).extend((client) => ({
-      async writeContract(args: any) {
-        const to = args.address
-        const value = args.value ?? BigInt(0)
-
-        // @ts-ignore
-        const calldata = encodeFunctionData({
-          abi: args.abi,
-          functionName: args.functionName,
-          args: args.args,
-        })
-
-        const encodedCall = encodeFunctionData({
-          abi: encodedCallAbi,
-          functionName: "call",
-          args: [to, value, calldata],
-        })
-
-        return encodedCall
-      },
-    }))
-
-    return createFlaunch({
-      publicClient: createPublicClient({
-        chain: selectedNetwork,
-        transport: http(),
-      }),
-      walletClient: mockWalletClient,
-    }) as ReadWriteFlaunchSDK
-  }, [selectedNetwork, crossAppAccount])
-
-  // Debug cross-app smart wallet availability
-  useEffect(() => {
-    console.log('=== Cross-App Smart Wallet Debug ===')
-    console.log('sendTransaction available:', !!sendTransaction)
-    console.log('crossAppAccount:', crossAppAccount)
-    console.log('crossAppAccount smartWallets:', crossAppAccount?.smartWallets)
-    console.log('user:', user)
-    console.log('authenticated:', authenticated)
-    console.log('flaunchWrite available:', !!flaunchWrite)
-    console.log('====================================')
-  }, [sendTransaction, crossAppAccount, user, authenticated, flaunchWrite])
 
   // Initialize Flaunch SDK
   useEffect(() => {
@@ -216,9 +152,9 @@ export default function ListMemesPage() {
     fetchTokens()
   }, [walletAddress, selectedNetwork, flaunchSDK])
 
-  // Buy function following dev's exact pattern
+  // Buy function - actually purchases tokens using Universal Router
   const handleBuy = useCallback(async (token: TokenData) => {
-    if (!flaunchWrite) {
+    if (!flaunchSDK) {
       alert('SDK not ready, please try again')
       return
     }
@@ -233,37 +169,62 @@ export default function ListMemesPage() {
     try {
       const ethAmount = BigInt(Math.floor(0.0001 * 1e18)) // 0.0001 ETH in wei
       
-      console.log('🔧 Using SDK hack to extract calldata...')
+      console.log('🔧 Preparing token purchase...')
+      console.log('Token:', token.name, token.tokenAddress)
+      console.log('ETH amount:', ethAmount.toString(), 'wei')
       
-      // Use the SDK hack to get the calldata (following dev's exact pattern)
-      const encodedCall = await flaunchWrite.buyCoin({
-        coinAddress: token.tokenAddress as `0x${string}`,
-        slippagePercent: 5, // 5% slippage like in dev's example
-        swapType: "EXACT_IN" as const,
+      // Get expected tokens from SDK for slippage calculation
+      const tokensExpected = await flaunchSDK.getBuyQuoteExactInput(
+        token.tokenAddress as `0x${string}`, 
+        ethAmount
+      )
+      
+      console.log('Expected tokens from quote:', tokensExpected.toString())
+      console.log('Expected tokens formatted:', (Number(tokensExpected) / 1e18).toLocaleString())
+      
+      // Calculate minimum tokens with 5% slippage
+      const minTokensOut = (tokensExpected * BigInt(95)) / BigInt(100) // 95% of expected
+      
+      // Get Universal Router address for the current network
+      const universalRouterAddress = UniversalRouterAddress[selectedNetwork.id]
+      if (!universalRouterAddress) {
+        throw new Error(`Universal Router not available on ${selectedNetwork.name}`)
+      }
+      
+      console.log('Universal Router address:', universalRouterAddress)
+      
+      // For Flaunch memecoins, we need to check if a position manager is available
+      if (!token.positionManager) {
+        throw new Error('Token does not have a position manager configured')
+      }
+      
+      // Use the SDK's ethToMemecoin function to get proper calldata
+      const { calldata } = ethToMemecoin({
+        sender: crossAppSmartWallet.address as Address,
+        memecoin: token.tokenAddress as Address,
+        chainId: selectedNetwork.id,
+        referrer: null, // No referrer for now
+        swapType: "EXACT_IN",
         amountIn: ethAmount,
-        referrer: undefined,
+        amountOutMin: minTokensOut,
+        positionManagerAddress: token.positionManager as Address,
       })
-
-      // Decode the call to get transaction parameters
-      const call = decodeFunctionData({
-        abi: encodedCallAbi,
-        data: encodedCall as `0x${string}`,
-      })
-
-      console.log('✅ SDK hack successful!')
-      console.log('- Contract:', call.args[0])
-      console.log('- Value:', call.args[1].toString())
-      console.log('- Calldata:', call.args[2])
-
-      // Use cross-app smart wallet to send transaction (like profile page)
+      
       const tx = {
-        to: call.args[0], // Contract address from SDK
-        value: `0x${call.args[1].toString(16)}`, // ETH value from SDK as hex string
-        data: call.args[2], // Calldata from SDK
+        to: universalRouterAddress as `0x${string}`,
+        value: `0x${ethAmount.toString(16)}`, // ETH value as hex
+        data: calldata,
         chainId: selectedNetwork.id,
       }
 
-      console.log('Sending transaction with cross-app smart wallet:', crossAppSmartWallet.address)
+      console.log('🔄 Transaction Details:')
+      console.log('- To (Universal Router):', universalRouterAddress)
+      console.log('- Value:', ethAmount.toString(), 'wei')
+      console.log('- Expected tokens:', (Number(tokensExpected) / 1e18).toLocaleString(), token.symbol)
+      console.log('- Min tokens (5% slippage):', (Number(minTokensOut) / 1e18).toLocaleString(), token.symbol)
+      console.log('- Recipient:', crossAppSmartWallet.address)
+      console.log('- Position Manager:', token.positionManager)
+      console.log('- Calldata from ethToMemecoin:', calldata)
       
       const hash = await sendTransaction(tx, { 
         address: crossAppSmartWallet.address as `0x${string}` 
@@ -271,7 +232,7 @@ export default function ListMemesPage() {
 
       console.log('✅ Transaction Hash:', hash)
       
-      alert(`🎉 Purchase Successful!\n\nTransaction: ${hash}\n\nRefreshing in 3 seconds...`)
+      alert(`🎉 Purchase Successful!\n\nTransaction: ${hash}\n\nExpected: ~${(Number(tokensExpected) / 1e18).toLocaleString()} ${token.symbol}\n\nRefreshing in 3 seconds...`)
       
       // Refresh to show updated balances
       setTimeout(() => {
@@ -293,7 +254,7 @@ export default function ListMemesPage() {
         alert(`Transaction failed: ${errorMessage}`)
       }
     }
-  }, [flaunchWrite, sendTransaction, crossAppAccount, selectedNetwork])
+  }, [flaunchSDK, sendTransaction, crossAppAccount, selectedNetwork])
 
   if (!isWalletConnected) {
     return (
