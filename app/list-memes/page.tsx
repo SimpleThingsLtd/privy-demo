@@ -1,20 +1,59 @@
 'use client'
 
-import React, { useEffect, useState } from 'react'
-import { usePrivy, useSendTransaction } from '@privy-io/react-auth'
+// MEME COIN PURCHASE IMPLEMENTATION
+// Uses Flaunch SDK for quotes and ethToMemecoin for Universal Router swaps
+
+import React, { useEffect, useState, useCallback } from 'react'
+import { usePrivy, useCrossAppAccounts } from '@privy-io/react-auth'
 import { useAccount, useBalance } from 'wagmi'
 import Link from 'next/link'
 import type { CrossAppAccount } from '@privy-io/react-auth'
-import { useGraphQL } from '@/lib/hooks/useGraphQL'
-import { GET_COLLECTION_TOKENS } from '@/lib/queries/meme-coins'
-import type { MemeCoin, CollectionTokensResponse } from '@/lib/types/graphql'
+import { useNetwork } from '@/contexts/NetworkContext'
+import { ReadFlaunchSDK, UniversalRouterAddress, ethToMemecoin } from '@flaunch/sdk'
+import { type Address } from 'viem'
+
+// Type for the REST API response
+type TokenData = {
+  tokenAddress: string
+  symbol: string
+  name: string
+  marketCapETH: string
+  createdAt: string
+  fairLaunchActive: boolean
+  image: string
+  description: string
+  positionManager?: string
+}
+
+type TokensApiResponse = {
+  data: TokenData[]
+  pagination: {
+    limit: number
+    offset: number
+  }
+  meta: {
+    network: string
+    timestamp: string
+  }
+}
 
 export default function ListMemesPage() {
   const { user, authenticated } = usePrivy()
   const { address: wagmiAddress, isConnected: wagmiIsConnected } = useAccount()
-  const { sendTransaction } = useSendTransaction()
+  const { sendTransaction } = useCrossAppAccounts()
+  const { selectedNetwork } = useNetwork()
   const [crossAppAccount, setCrossAppAccount] = useState<CrossAppAccount | null>(null)
-  const [memeCoins, setMemeCoins] = useState<MemeCoin[]>([])
+  const [tokens, setTokens] = useState<TokenData[]>([])
+  const [loading, setLoading] = useState(false)
+  const [error, setError] = useState<string | null>(null)
+  const [flaunchSDK, setFlaunchSDK] = useState<ReadFlaunchSDK | null>(null)
+  const [tokenPrices, setTokenPrices] = useState<{[key: string]: number}>({})
+
+  // Initialize Flaunch SDK
+  useEffect(() => {
+    const sdk = new ReadFlaunchSDK(selectedNetwork.id)
+    setFlaunchSDK(sdk)
+  }, [selectedNetwork])
 
   // Find cross-app account when user is authenticated
   useEffect(() => {
@@ -48,9 +87,10 @@ export default function ListMemesPage() {
   const walletAddress = getWalletAddress()
   const isWalletConnected = authenticated || wagmiIsConnected
 
-  // Get balance for the cross-app embedded wallet
+  // Get balance for the cross-app embedded wallet on selected network
   const { data: balanceData, isLoading: balanceLoading } = useBalance({
     address: crossAppAccount?.embeddedWallets?.[0]?.address as `0x${string}` | undefined,
+    chainId: selectedNetwork.id,
     query: {
       enabled: !!crossAppAccount?.embeddedWallets?.[0]?.address,
     },
@@ -61,78 +101,160 @@ export default function ListMemesPage() {
   const currentBalance = balanceData ? parseFloat(balanceData.formatted) : 0
   const hasSufficientBalance = currentBalance >= requiredAmount
 
-  // Use GraphQL hook to fetch meme coins
-  const { data, loading, error } = useGraphQL<CollectionTokensResponse>(
-    GET_COLLECTION_TOKENS,
-    {
-      variables: { owner: walletAddress || '' },
-      pause: !walletAddress, // Pause the query if no wallet address
-    }
-  )
-
-  // Process the data when it changes
+  // Fetch tokens from REST API
   useEffect(() => {
-    const processMemeCoins = async () => {
-      if (!data?.collectionTokens) {
-        setMemeCoins([])
+    const fetchTokens = async () => {
+      if (!walletAddress) {
+        setTokens([])
         return
       }
 
-      // Fetch metadata for each meme coin
-      const coinsWithMetadata = await Promise.all(
-        data.collectionTokens.map(async (coin: MemeCoin) => {
-          try {
-            const metadataResponse = await fetch(coin.baseURI.replace('ipfs://', 'https://ipfs.flaunch.gg/ipfs/'))
-            const metadata = await metadataResponse.json()
-            return {
-              ...coin,
-              image: metadata.image?.replace('ipfs://', 'https://images.flaunch.gg/cdn-cgi/image/width=300,height=300,anim=true,format=auto/https://ipfs.flaunch.gg/ipfs/')
+      setLoading(true)
+      setError(null)
+
+      try {
+        // Determine network string for API
+        const networkName = selectedNetwork.id === 8453 ? 'base' : 'base-sepolia'
+        const apiUrl = `https://dev-api.flayerlabs.xyz/v1/${networkName}/tokens?ownerAddress=${walletAddress}`
+        
+        const response = await fetch(apiUrl)
+        if (!response.ok) {
+          throw new Error(`Failed to fetch tokens: ${response.status}`)
+        }
+
+        const apiData: TokensApiResponse = await response.json()
+        setTokens(apiData.data)
+
+        // Fetch prices for each token with SDK
+        if (flaunchSDK && apiData.data.length > 0) {
+          apiData.data.forEach(async (token) => {
+            try {
+              // Get buy quote for 0.0001 ETH (converted to wei)
+              const ethAmount = BigInt(Math.floor(0.0001 * 1e18)) // 0.0001 ETH in wei
+              const tokensReceived = await flaunchSDK.getBuyQuoteExactInput(token.tokenAddress as `0x${string}`, ethAmount)
+              const tokenPrice = Number(tokensReceived)
+              setTokenPrices(prev => ({ ...prev, [token.tokenAddress]: tokenPrice }))
+            } catch (priceError) {
+              console.warn(`Could not fetch price for ${token.name}:`, priceError)
             }
-          } catch (error) {
-            console.error(`Error fetching metadata for ${coin.name}:`, error)
-            return coin
-          }
-        })
-      )
+          })
+        }
 
-      setMemeCoins(coinsWithMetadata)
+      } catch (err) {
+        console.error('Error fetching tokens:', err)
+        setError(err instanceof Error ? err.message : 'Failed to fetch tokens')
+        setTokens([])
+      } finally {
+        setLoading(false)
+      }
     }
 
-    processMemeCoins()
-  }, [data])
+    fetchTokens()
+  }, [walletAddress, selectedNetwork, flaunchSDK])
 
-  const handleBuy = async (coin: MemeCoin) => {
-    if (!coin.pool?.positionManager) {
-      console.error('No position manager found for this coin')
+  // Buy function - actually purchases tokens using Universal Router
+  const handleBuy = useCallback(async (token: TokenData) => {
+    if (!flaunchSDK) {
+      alert('SDK not ready, please try again')
       return
     }
 
-    // Ensure we're using the cross-app embedded wallet
-    if (!crossAppAccount?.embeddedWallets?.[0]?.address) {
-      console.error('Cross-app embedded wallet not found')
-      alert('Please ensure you are connected with a cross-app wallet')
+    // Check if cross-app smart wallet is available
+    const crossAppSmartWallet = crossAppAccount?.smartWallets?.[0]
+    if (!crossAppSmartWallet?.address) {
+      alert('Cross-app smart wallet not available')
       return
     }
-
-    const embeddedWalletAddress = crossAppAccount.embeddedWallets[0].address
-    console.log('Using embedded wallet address:', embeddedWalletAddress)
 
     try {
+      const ethAmount = BigInt(Math.floor(0.0001 * 1e18)) // 0.0001 ETH in wei
+      
+      console.log('🔧 Preparing token purchase...')
+      console.log('Token:', token.name, token.tokenAddress)
+      console.log('ETH amount:', ethAmount.toString(), 'wei')
+      
+      // Get expected tokens from SDK for slippage calculation
+      const tokensExpected = await flaunchSDK.getBuyQuoteExactInput(
+        token.tokenAddress as `0x${string}`, 
+        ethAmount
+      )
+      
+      console.log('Expected tokens from quote:', tokensExpected.toString())
+      console.log('Expected tokens formatted:', (Number(tokensExpected) / 1e18).toLocaleString())
+      
+      // Calculate minimum tokens with 5% slippage
+      const minTokensOut = (tokensExpected * BigInt(95)) / BigInt(100) // 95% of expected
+      
+      // Get Universal Router address for the current network
+      const universalRouterAddress = UniversalRouterAddress[selectedNetwork.id]
+      if (!universalRouterAddress) {
+        throw new Error(`Universal Router not available on ${selectedNetwork.name}`)
+      }
+      
+      console.log('Universal Router address:', universalRouterAddress)
+      
+      // For Flaunch memecoins, we need to check if a position manager is available
+      if (!token.positionManager) {
+        throw new Error('Token does not have a position manager configured')
+      }
+      
+      // Use the SDK's ethToMemecoin function to get proper calldata
+      const { calldata } = ethToMemecoin({
+        sender: crossAppSmartWallet.address as Address,
+        memecoin: token.tokenAddress as Address,
+        chainId: selectedNetwork.id,
+        referrer: null, // No referrer for now
+        swapType: "EXACT_IN",
+        amountIn: ethAmount,
+        amountOutMin: minTokensOut,
+        positionManagerAddress: token.positionManager as Address,
+      })
+      
       const tx = {
-        to: '0x6fF5693b99212Da76ad316178A184AB56D299b43', // Universal Router for Uniswap V4
-        value: '0x5af3107a400', // 0.0001 ETH in wei
-        data: '0x24856bc300000000000000000000000000000000000000000000000000000000000000400000000000000000000000000000000000000000000000000000000000000080000000000000000000000000000000000000000000000000000000000000000210040000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000002000000000000000000000000000000000000000000000000000000000000004000000000000000000000000000000000000000000000000000000000000004e00000000000000000000000000000000000000000000000000000000000000480000000000000000000000000000000000000000000000000000000000000004000000000000000000000000000000000000000000000000000000000000000800000000000000000000000000000000000000000000000000000000000000003070c0f0000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000300000000000000000000000000000000000000000000000000000000000000600000000000000000000000000000000000000000000000000000000000000320000000000000000000000000000000000000000000000000000000000000038000000000000000000000000000000000000000000000000000000000000002a000000000000000000000000000000000000000000000000000000000000000200000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000008000000000000000000000000000000000000000000000000000005af3107a400000000000000000000000000000000000000000000751465afaab514682ef3c89000000000000000000000000000000000000000000000000000000000000000200000000000000000000000000000000000000000000000000000000000000400000000000000000000000000000000000000000000000000000000000000100000000000000000000000000000000000d564d5be76f7f0d28fe52605afc7cf80000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000003c0000000000000000000000009e433f32bb5481a9ca7dff5b3af74a7ed041a88800000000000000000000000000000000000000000000000000000000000000a00000000000000000000000000000000000000000000000000000000000000000000000000000000000000000f210aba8cdf4f769611b1340e24340825413f61a0000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000003c000000000000000000000000f785bb58059fab6fb19bdda2cb9078d9e546efdc00000000000000000000000000000000000000000000000000000000000000a0000000000000000000000000000000000000000000000000000000000000002000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000040000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000005af3107a40000000000000000000000000000000000000000000000000000000000000000040000000000000000000000000f210aba8cdf4f769611b1340e24340825413f61a00000000000000000000000000000000000000000751465afaab514682ef3c89000000000000000000000000000000000000000000000000000000000000006000000000000000000000000000000000000000000000000000000000000000000000000000000000000000004eac46c2472b32dc7158110825a7443d35a901680000000000000000000000000000000000000000000000000000000000000000'
+        to: universalRouterAddress as `0x${string}`,
+        value: `0x${ethAmount.toString(16)}`, // ETH value as hex
+        data: calldata,
+        chainId: selectedNetwork.id,
       }
 
-      console.log('Signing transaction with embedded wallet:', embeddedWalletAddress)
-      const { hash } = await sendTransaction(tx, { address: embeddedWalletAddress })
-      console.log('Transaction hash:', hash)
-      alert('Transaction submitted successfully! Check console for details.')
+      console.log('🔄 Transaction Details:')
+      console.log('- To (Universal Router):', universalRouterAddress)
+      console.log('- Value:', ethAmount.toString(), 'wei')
+      console.log('- Expected tokens:', (Number(tokensExpected) / 1e18).toLocaleString(), token.symbol)
+      console.log('- Min tokens (5% slippage):', (Number(minTokensOut) / 1e18).toLocaleString(), token.symbol)
+      console.log('- Recipient:', crossAppSmartWallet.address)
+      console.log('- Position Manager:', token.positionManager)
+      console.log('- Calldata from ethToMemecoin:', calldata)
+      
+      const hash = await sendTransaction(tx, { 
+        address: crossAppSmartWallet.address as `0x${string}` 
+      })
+
+      console.log('✅ Transaction Hash:', hash)
+      
+      alert(`🎉 Purchase Successful!\n\nTransaction: ${hash}\n\nExpected: ~${(Number(tokensExpected) / 1e18).toLocaleString()} ${token.symbol}\n\nRefreshing in 3 seconds...`)
+      
+      // Refresh to show updated balances
+      setTimeout(() => {
+        window.location.reload()
+      }, 3000)
+      
     } catch (error) {
-      console.error('Error signing transaction:', error)
-      alert('Error signing transaction. Check console for details.')
+      console.error('Error during token purchase:', error)
+      
+      const errorMessage = error instanceof Error ? error.message : 'Unknown error'
+      
+      if (errorMessage.includes('insufficient funds')) {
+        alert('Insufficient ETH balance. Please add more ETH to your wallet.')
+      } else if (errorMessage.includes('slippage')) {
+        alert('Price changed too much during transaction. Please try again.')
+      } else if (errorMessage.includes('User rejected')) {
+        alert('Transaction cancelled by user.')
+      } else {
+        alert(`Transaction failed: ${errorMessage}`)
+      }
     }
-  }
+  }, [flaunchSDK, sendTransaction, crossAppAccount, selectedNetwork])
 
   if (!isWalletConnected) {
     return (
@@ -157,25 +279,35 @@ export default function ListMemesPage() {
       <p className="text-gray-600 mb-4">Meme coins that have been created by <code>{walletAddress}</code></p>
 
       {/* Wallet Status Section */}
-      {crossAppAccount?.embeddedWallets?.[0]?.address && (
+      {(crossAppAccount?.embeddedWallets?.[0]?.address || crossAppAccount?.smartWallets?.[0]?.address) && (
         <div className="mb-6 p-4 bg-blue-50 border border-blue-100 rounded-lg">
           <h3 className="font-semibold text-blue-900 mb-2">Wallet Status</h3>
-          <p className="text-sm text-blue-800 mb-2">
-            Cross-app wallet: <code>{crossAppAccount.embeddedWallets[0].address}</code>
+          <p className="text-sm text-blue-800 mb-1">
+            Network: <strong>{selectedNetwork.name}</strong>
           </p>
+          {crossAppAccount?.smartWallets?.[0]?.address && (
+            <p className="text-sm text-blue-800 mb-2">
+              Cross-app smart wallet: <code>{crossAppAccount.smartWallets[0].address}</code>
+            </p>
+          )}
+          {crossAppAccount?.embeddedWallets?.[0]?.address && (
+            <p className="text-sm text-blue-800 mb-2">
+              Cross-app embedded wallet: <code>{crossAppAccount.embeddedWallets[0].address}</code>
+            </p>
+          )}
           {balanceLoading ? (
             <p className="text-sm text-blue-700">Loading balance...</p>
           ) : (
             <div className="space-y-2">
               <p className="text-sm text-blue-700">
-                Current balance: <strong>{currentBalance.toFixed(6)} ETH</strong> on Base network
+                Current balance: <strong>{currentBalance.toFixed(6)} ETH</strong> on {selectedNetwork.name}
               </p>
               {!hasSufficientBalance && (
                 <div className="p-3 bg-yellow-50 border border-yellow-200 rounded">
                   <p className="text-sm text-yellow-800 font-medium mb-1">⚠️ Insufficient Balance</p>
                   <p className="text-sm text-yellow-700">
                     You need at least 0.0002 ETH to complete transactions (including gas fees).
-                    Please add funds to your cross-app wallet on the Base network.
+                    Please add funds to your cross-app wallet on the {selectedNetwork.name} network.
                   </p>
                 </div>
               )}
@@ -183,27 +315,28 @@ export default function ListMemesPage() {
           )}
         </div>
       )}
+      
       {loading ? (
         <div className="text-center py-8">
           <p className="text-lg">Loading meme coins...</p>
         </div>
       ) : error ? (
         <div className="p-4 bg-red-50 border border-red-100 text-red-700 rounded-lg">
-          <p>Error: {error.message}</p>
+          <p>Error: {error}</p>
         </div>
-      ) : memeCoins.length === 0 ? (
+      ) : tokens.length === 0 ? (
         <div className="text-center py-8">
           <p className="text-lg">No meme coins found for this wallet</p>
         </div>
       ) : (
         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
-          {memeCoins.map((coin) => (
-            <div key={coin.id} className="border rounded-lg overflow-hidden bg-white shadow-sm hover:shadow-md transition-shadow">
+          {tokens.map((token) => (
+            <div key={token.tokenAddress} className="border rounded-lg overflow-hidden bg-white shadow-sm hover:shadow-md transition-shadow">
               <div className="aspect-square relative">
-                {coin.image ? (
+                {token.image ? (
                   <img 
-                    src={coin.image} 
-                    alt={coin.name}
+                    src={token.image} 
+                    alt={token.name}
                     className="w-full h-full object-cover"
                   />
                 ) : (
@@ -213,50 +346,48 @@ export default function ListMemesPage() {
                 )}
               </div>
               <div className="p-4">
-                <h3 className="font-semibold text-lg mb-1">{coin.name}</h3>
-                <p className="text-gray-600 mb-3">{coin.symbol}</p>
-                {crossAppAccount?.embeddedWallets?.[0]?.address ? (
-                  <div className="space-y-2">
-                    <p className="text-xs text-gray-500">
-                      Using wallet: {crossAppAccount.embeddedWallets[0].address.slice(0, 6)}...{crossAppAccount.embeddedWallets[0].address.slice(-4)}
-                    </p>
-                    {balanceLoading ? (
-                      <p className="text-xs text-gray-500">Loading balance...</p>
-                    ) : (
-                      <p className="text-xs text-gray-500">
-                        Balance: {currentBalance.toFixed(6)} ETH
-                      </p>
-                    )}
-                    {hasSufficientBalance ? (
-                      <button 
-                        className="w-full px-4 py-2 bg-blue-600 text-white rounded-md hover:bg-blue-700 transition-colors"
-                        onClick={() => handleBuy(coin)}
-                      >
-                        Buy 0.0001 ETH ($0.25) 
-                      </button>
-                    ) : (
-                      <div className="space-y-1">
-                        <button 
-                          className="w-full px-4 py-2 bg-gray-400 text-white rounded-md cursor-not-allowed"
-                          disabled
-                        >
-                          Buy 0.0001 ETH ($0.25) 
-                        </button>
-                        <p className="text-xs text-red-500">
-                          Insufficient balance. Need ~0.0002 ETH (including gas)
-                        </p>
-                      </div>
-                    )}
-                  </div>
+                <h3 className="font-semibold text-lg mb-1">{token.name}</h3>
+                <p className="text-gray-600 mb-2">{token.symbol}</p>
+                {token.description && (
+                  <p className="text-sm text-gray-500 mb-2">{token.description}</p>
+                )}
+                <p className="text-sm text-blue-600 mb-2">
+                  Market Cap: {parseFloat(token.marketCapETH).toFixed(4)} ETH
+                </p>
+                {token.fairLaunchActive && (
+                  <p className="text-sm text-orange-600 mb-2">🚀 Fair Launch Active</p>
+                )}
+                {tokenPrices[token.tokenAddress] && (
+                  <p className="text-sm text-green-600 mb-3">
+                    Price: {tokenPrices[token.tokenAddress].toLocaleString()} tokens for 0.0001 ETH
+                  </p>
+                )}
+                
+                {crossAppAccount?.smartWallets?.[0]?.address && hasSufficientBalance ? (
+                  <button 
+                    className="w-full px-4 py-2 bg-blue-600 text-white rounded-md hover:bg-blue-700 transition-colors"
+                    onClick={() => handleBuy(token)}
+                  >
+                    Buy 0.0001 ETH (~$0.25) 
+                  </button>
                 ) : (
-                  <div className="space-y-2">
-                    <p className="text-xs text-red-500">Cross-app wallet not available</p>
+                  <div className="space-y-1">
                     <button 
                       className="w-full px-4 py-2 bg-gray-400 text-white rounded-md cursor-not-allowed"
                       disabled
                     >
-                      Buy 0.0001 ETH ($0.25) 
+                      Buy 0.0001 ETH (~$0.25) 
                     </button>
+                    {!crossAppAccount?.smartWallets?.[0]?.address && (
+                      <p className="text-xs text-red-500">
+                        Cross-app smart wallet not available
+                      </p>
+                    )}
+                    {!hasSufficientBalance && (
+                      <p className="text-xs text-red-500">
+                        Insufficient balance. Need ~0.0002 ETH (including gas)
+                      </p>
+                    )}
                   </div>
                 )}
               </div>

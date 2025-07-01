@@ -13,6 +13,7 @@ import {
 } from '@rainbow-me/rainbowkit'
 import { toPrivyWallet } from '@privy-io/cross-app-connect/rainbow-kit'
 import { GraphQLProvider } from '@/components/GraphQLProvider'
+import { NetworkProvider } from '@/contexts/NetworkContext'
 import '@rainbow-me/rainbowkit/styles.css'
 import type { Chain } from 'wagmi/chains'
 
@@ -82,9 +83,11 @@ export function Providers({ children }: ProvidersProps) {
             <RainbowKitProvider 
               theme={lightTheme()}
             >
-              <GraphQLProvider>
-                {children}
-              </GraphQLProvider>
+              <NetworkProvider>
+                <GraphQLProvider>
+                  {children}
+                </GraphQLProvider>
+              </NetworkProvider>
             </RainbowKitProvider>
           </QueryClientProvider>
         </WagmiProvider>
