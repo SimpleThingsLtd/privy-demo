@@ -306,14 +306,7 @@ export default function ListMemesPage() {
       console.log('- Calldata from ethToMemecoin:', calldata)
       
       const hash = await sendTransaction(tx, { 
-        address: crossAppSmartWallet.address as `0x${string}`,
-        uiOptions: {
-          showWalletUIs: false,
-          header: {
-            showBackButton: false,
-            showExitButton: false
-          }
-        }
+        address: crossAppSmartWallet.address as `0x${string}`
       })
 
       console.log('✅ Transaction Hash:', hash)
