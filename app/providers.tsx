@@ -63,7 +63,8 @@ export function Providers({ children }: ProvidersProps) {
       appId={process.env.NEXT_PUBLIC_PRIVY_APP_ID!}
       config={{
         embeddedWallets: {
-          showWalletUIs: false
+          showWalletUIs: false,
+          createOnLogin: 'all-users'
         },
         appearance: {
           theme: 'light'
